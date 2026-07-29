@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+.next
+.env*
+!.env.local.example
+npm-debug.log*
+.DS_Store
+coverage
+.vscode
+.idea
+knowledge
+mcp-server/node_modules
