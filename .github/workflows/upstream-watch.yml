@@ -1,0 +1,89 @@
+name: Watch upstream for new commits
+
+on:
+  schedule:
+    # Every 2 days at 10:00 IST (04:30 UTC)
+    - cron: '30 4 */2 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/ArnasDon/wacrm.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Determine new commits
+        id: diff
+        run: |
+          STATE_FILE=".github/upstream-last-sha.txt"
+          LATEST_SHA=$(git rev-parse upstream/main)
+
+          if [ -f "$STATE_FILE" ]; then
+            LAST_SHA=$(cat "$STATE_FILE")
+          else
+            LAST_SHA=""
+          fi
+
+          if [ "$LAST_SHA" = "$LATEST_SHA" ]; then
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$LAST_SHA" ] || ! git cat-file -e "$LAST_SHA" 2>/dev/null; then
+            # First run or unknown SHA: just baseline to latest, no email spam
+            echo "$LATEST_SHA" > "$STATE_FILE"
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LOG=$(git log --pretty=format:'- %h %s (%an)' "$LAST_SHA..$LATEST_SHA")
+          {
+            echo "log<<EOF"
+            echo "$LOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "latest_sha=$LATEST_SHA" >> "$GITHUB_OUTPUT"
+          echo "has_new=true" >> "$GITHUB_OUTPUT"
+          echo "$LATEST_SHA" > "$STATE_FILE"
+
+      - name: Send email via Resend
+        if: steps.diff.outputs.has_new == 'true'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          COMMIT_LOG: ${{ steps.diff.outputs.log }}
+        run: |
+          BODY=$(printf 'New commits on upstream ArnasDon/wacrm (main):\n\n%s\n\nCompare: https://github.com/ArnasDon/wacrm/compare/%s' "$COMMIT_LOG" "${{ steps.diff.outputs.latest_sha }}")
+
+          PAYLOAD=$(jq -n \
+            --arg from "onboarding@resend.dev" \
+            --arg to "singhlabs26@gmail.com" \
+            --arg subject "Upstream update: wacrm main branch has new commits" \
+            --arg text "$BODY" \
+            '{from: $from, to: [$to], subject: $subject, text: $text}')
+
+          curl -s -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+      - name: Commit updated state file
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/upstream-last-sha.txt
+          git diff --staged --quiet || git commit -m "chore: update upstream-watch last seen sha"
+          git push
