@@ -1088,9 +1088,12 @@ function StepRenderer({
   // Card widths on mobile fill the full canvas column (max-w-2xl px-4
   // still keeps them reasonable). On sm+ the original fixed widths
   // come back so the flow visual stays recognisable.
+  const isInteractive = step.step_type === "send_buttons" || step.step_type === "send_list"
   const width = isCondition
     ? "w-full max-w-[400px] sm:w-[400px]"
-    : "w-full max-w-[320px] sm:w-80"
+    : expanded && isInteractive
+      ? "w-full max-w-[1010px] sm:w-[1010px]"
+      : "w-full max-w-[320px] sm:w-80"
 
   return (
     <>
